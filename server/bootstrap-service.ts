@@ -1,0 +1,6 @@
+import {randomUUID} from 'node:crypto';
+import type pg from 'pg';
+import bcrypt from 'bcryptjs';
+import {z} from 'zod';
+export const bootstrapInput=z.object({name:z.string().trim().min(1).max(150),username:z.string().regex(/^[a-zA-Z0-9._-]{3,80}$/),password:z.string().min(16).max(200)});
+export async function bootstrap(db:pg.PoolClient,input:z.infer<typeof bootstrapInput>){const i=bootstrapInput.parse(input);await db.query('SELECT pg_advisory_xact_lock(812861)');for(const table of ['branches','users','medicines','sales'])if((await db.query(`SELECT 1 FROM ${table} LIMIT 1`)).rowCount)throw Error('Production bootstrap requires an empty database. Existing data was not changed.');const branch=randomUUID(),owner=randomUUID();await db.query('INSERT INTO branches(id,name,tax_confirmed) VALUES($1,$2,false)',[branch,i.name]);await db.query("INSERT INTO users(id,branch_id,name,username,password_hash,role,is_super_admin) VALUES($1,$2,'Store owner',$3,$4,'OWNER',true)",[owner,branch,i.username,await bcrypt.hash(i.password,12)]);await db.query("INSERT INTO audit_events(id,branch_id,actor_id,action,entity_id,details) VALUES($1,$2,$3,'PRODUCTION_BOOTSTRAPPED',$4,'{\"tax_confirmation_required\":true,\"demo_data\":false}')",[randomUUID(),branch,owner,branch]);return{branch,owner}}

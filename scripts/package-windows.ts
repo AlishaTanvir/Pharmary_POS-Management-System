@@ -1,0 +1,16 @@
+import {build} from 'esbuild';
+import {cp,mkdir,readFile,readdir,writeFile} from 'node:fs/promises';
+import {resolve,join} from 'node:path';
+import {createHash} from 'node:crypto';
+const version=JSON.parse(await readFile('package.json','utf8')).version;const output=resolve('releases','pharmacy-pos-'+version+'-'+new Date().toISOString().replace(/[:.]/g,'-'));await mkdir(output,{recursive:true});
+for(const entry of ['index','migrate','bootstrap'])await build({entryPoints:['server/'+entry+'.ts'],outfile:join(output,'server',entry+'.js'),platform:'node',target:'node24',format:'esm',bundle:true,packages:'external'});
+await cp('dist',join(output,'dist'),{recursive:true});await cp('server/migrations',join(output,'server/migrations'),{recursive:true});await cp('docs',join(output,'docs'),{recursive:true});await cp('scripts/windows',output,{recursive:true});
+await writeFile(join(output,'package.json'),JSON.stringify({name:'pharmacy-pos-release',version,private:true,type:'module'}));
+const lock=JSON.parse(await readFile('package-lock.json','utf8'));const dependencies=[];
+for(const [path,pkg] of Object.entries(lock.packages) as [string,any][]){if(!path||pkg.dev||pkg.devOptional)continue;await cp(path,join(output,path),{recursive:true});dependencies.push({path,version:pkg.version,license:pkg.license||'See package license'})}
+await writeFile(join(output,'THIRD-PARTY.json'),JSON.stringify({node:'Requires separately installed Node.js 24+',postgres:'Requires separately installed PostgreSQL 18 and matching dump/restore tools. Their licenses are supplied by their installers.',dependencies},null,2));
+const migrations=[];for(const name of (await readdir('server/migrations')).filter(name=>name.endsWith('.sql')).sort())migrations.push({version:name,sha256:createHash('sha256').update(await readFile('server/migrations/'+name)).digest('hex')});
+await writeFile(join(output,'release-policy.json'),JSON.stringify({schema:'pharmacy-release-policy/v1',version,currency:'PKR',node_major_tested:24,postgres_major:18,migrations,production_approval:'PENDING',signing:'UNSIGNED_CANDIDATE'},null,2));
+const files:{path:string;sha256:string}[]=[];async function scan(dir:string,prefix=''){for(const item of await readdir(dir,{withFileTypes:true})){const relative=prefix+item.name;if(item.isDirectory())await scan(join(dir,item.name),relative+'/');else{if(/(^|\/)(\.env|\.postgres|\.local|backups|test-results|initial-owner-credentials\.txt|data-location\.txt)(\/|$)/.test(relative)||relative.endsWith('.sqlite')||relative.endsWith('.pgbak'))throw Error('Private file found in release allowlist.');files.push({path:relative,sha256:createHash('sha256').update(await readFile(join(dir,item.name))).digest('hex')})}}}await scan(output);await writeFile(join(output,'manifest.json'),JSON.stringify({schema:'pharmacy-release/v2',version,unsigned:true,created_at:new Date().toISOString(),files},null,2));console.log('Prepared unsigned Windows distribution:',output);console.log('No database, keys, .env, test records, Node/PostgreSQL runtime or generated credentials are included.');
+
+const {verifyRelease}=await import('./windows/verify-release.mjs');console.log('Release qualification:',JSON.stringify(await verifyRelease(output)));

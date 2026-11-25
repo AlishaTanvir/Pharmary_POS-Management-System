@@ -1,0 +1,10 @@
+import {z} from 'zod';
+import {isBankDay} from './bank-domain';
+export const bankDay=z.string().refine(isBankDay,'Invalid calendar date');
+export const bankAmount=z.number().int().min(-100000000000000).max(100000000000000);
+const uuid=z.string().uuid(),reason=z.string().trim().min(3).max(500);
+export const bankImportInput=z.object({idempotency_key:uuid,bank_label:z.string().trim().min(1).max(100),reference:z.string().trim().min(1).max(150),from_date:bankDay,to_date:bankDay,opening_paisa:bankAmount,closing_paisa:bankAmount,csv_text:z.string().max(500000),reason}).refine(i=>i.from_date<=i.to_date,'Statement dates are reversed');
+export const bankMatchInput=z.object({idempotency_key:uuid,statement_line_id:uuid.nullable(),book_line_ids:z.array(uuid).min(1).max(100).transform(ids=>[...new Set(ids)].sort()),reason});
+export const bankReasonInput=z.object({idempotency_key:uuid,reason});
+export const bankAdjustmentInput=z.object({idempotency_key:uuid,statement_line_id:uuid,posting_date:bankDay,offset_account:z.enum(['1010','1020','6100','7100']),reason});
+export const bankCloseInput=z.object({idempotency_key:uuid,reason,baseline_confirmed:z.literal(true),expected_fingerprint:z.string().regex(/^[a-f0-9]{64}$/)});

@@ -1,0 +1,3 @@
+import {pool,transaction} from '../../server/db';
+import {receiveTransfer} from '../../server/expansion-services';
+const rows=(await pool.query("SELECT t.*,u.name actor FROM stock_transfers t JOIN users u ON u.id=t.actor_id WHERE t.reason LIKE 'Outlet replenishment %' AND u.username='owner' AND u.is_super_admin AND NOT EXISTS(SELECT 1 FROM transfer_receipts r WHERE r.transfer_id=t.id)")).rows;for(const t of rows)await transaction(db=>receiveTransfer(db,{id:t.actor_id,name:t.actor,branch_id:t.to_branch_id,role:'OWNER'},t.id,'QUARANTINED','Acceptance-test recovery: receive retained fixture stock into quarantine'));console.log('Retained acceptance transfers received into quarantine:',rows.length);await pool.end();

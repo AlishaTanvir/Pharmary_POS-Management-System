@@ -1,0 +1,54 @@
+name: Pharmacy acceptance checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Install checksum-verified PostgreSQL backup utilities
+        shell: powershell
+        run: ./scripts/install-pg-tools.ps1
+      - run: npx playwright install chromium firefox
+      - name: Isolated full Chromium acceptance
+        run: npm run test:acceptance
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chromium-acceptance-summary
+          path: .local/acceptance-evidence-chromium.json
+          if-no-files-found: ignore
+      - name: Isolated Firefox smoke acceptance
+        id: firefox
+        run: npm run test:acceptance -- e2e/browser-smoke.spec.ts
+        env:
+          ACCEPTANCE_BROWSER: firefox
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.firefox.outcome != 'skipped' }}
+        with:
+          name: firefox-acceptance-summary
+          path: .local/acceptance-evidence-firefox.json
+          if-no-files-found: ignore
+      - name: Prepare verified unsigned candidate
+        run: npm run package:windows
+      - name: Installed bootstrap, restore and side-by-side qualification
+        run: npm run qualify:installed
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-qualification-summary
+          path: .local/phase25-installed-evidence.json
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-candidate
+          path: releases/

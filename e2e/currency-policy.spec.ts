@@ -1,0 +1,10 @@
+import {test,expect} from '@playwright/test';
+test('PKR decision is visible and profile/branch requests cannot relabel currency',async({page})=>{
+ expect((await page.request.post('/api/auth/login',{data:{username:'owner',password:process.env.ADMIN_PASSWORD}})).ok()).toBeTruthy();const me=await page.request.get('/api/auth/me').then(r=>r.json()),headers={'X-CSRF-Token':me.csrf},before=await page.request.get('/api/profile').then(r=>r.json()),branches=await page.request.get('/api/branches').then(r=>r.json());expect(before.currency).toBe('PKR');expect(before.fx_supported).toBe(false);
+ const invalidProfile=await page.request.put('/api/profile',{headers,data:{...before,currency:'USD',password:process.env.ADMIN_PASSWORD}});expect(invalidProfile.status()).toBe(400);expect((await invalidProfile.json()).error).toContain('currency');expect(await page.request.get('/api/profile').then(r=>r.json())).toEqual(before);
+ expect((await page.request.post('/api/branches',{headers,data:{name:'Currency must not create a branch',invoice_prefix:'FX-NO',currency:'USD',password:process.env.ADMIN_PASSWORD}})).status()).toBe(400);expect(await page.request.get('/api/branches').then(r=>r.json())).toEqual(branches);
+ // Existing clients may omit currency; retaining the same profile must keep PKR and all monetary meaning.
+ const {currency,...legacy}=before;expect((await page.request.put('/api/profile',{headers,data:{...legacy,password:process.env.ADMIN_PASSWORD}})).ok()).toBeTruthy();const after=await page.request.get('/api/profile').then(r=>r.json());expect(after).toEqual(before);
+ await page.goto('/#settings');const card=page.locator('section').filter({has:page.getByRole('heading',{name:'Pharmacy profile',exact:true})});await expect(card).toContainText('Operating currency');await expect(card).toContainText('PKR (fixed)');await page.screenshot({path:'test-results/pkr-policy-profile.png'});
+ const field=await page.request.get('/api/pilot/field').then(r=>r.json());expect(field.open_project_gates.some((g:any)=>g.phase===24)).toBe(false);expect(field.production_approved).toBe(false);
+});

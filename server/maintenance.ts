@@ -1,0 +1,4 @@
+import {pool,transaction} from './db';
+import {expireBatches} from './production-services';
+import {createBackup} from './backups';
+export function startMaintenance(){let running=false;const tick=async()=>{if(running)return;running=true;try{await transaction(db=>expireBatches(db));const settings=(await pool.query('SELECT * FROM backup_settings WHERE id=1')).rows[0];if(settings?.enabled){const last=(await pool.query("SELECT started_at FROM backup_runs WHERE status IN ('SUCCEEDED','RUNNING') ORDER BY started_at DESC LIMIT 1")).rows[0];if(!last||Date.now()-new Date(last.started_at).getTime()>settings.interval_hours*3600000)await createBackup()}}catch(error){console.error('Maintenance:',error instanceof Error?error.message:'Operation failed')}finally{running=false}};const timer=setInterval(()=>void tick(),60000);timer.unref();void tick();return()=>clearInterval(timer)}

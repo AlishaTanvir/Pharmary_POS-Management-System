@@ -1,0 +1,7 @@
+ALTER TABLE branches ADD COLUMN count_owner_threshold_base integer NOT NULL DEFAULT 0 CHECK(count_owner_threshold_base>=0);
+ALTER TABLE stock_counts ADD COLUMN snapshot_movement_count bigint CHECK(snapshot_movement_count>=0);
+CREATE TABLE count_sheets(id uuid PRIMARY KEY,branch_id uuid NOT NULL REFERENCES branches,name text NOT NULL,filters jsonb NOT NULL,idempotency_key uuid NOT NULL,request_hash text NOT NULL,actor_id uuid NOT NULL REFERENCES users,created_at timestamptz NOT NULL DEFAULT now(),UNIQUE(branch_id,idempotency_key));
+CREATE TABLE count_sheet_lines(id uuid PRIMARY KEY,sheet_id uuid NOT NULL REFERENCES count_sheets,batch_id uuid NOT NULL REFERENCES batches,medicine_name text NOT NULL,base_unit text NOT NULL,batch_code text NOT NULL,expiry date NOT NULL,location text NOT NULL,form text NOT NULL,status text NOT NULL,snapshot_quantity integer NOT NULL CHECK(snapshot_quantity>=0),snapshot_movement_count bigint NOT NULL CHECK(snapshot_movement_count>=0),UNIQUE(sheet_id,batch_id));
+CREATE TABLE count_sheet_submissions(line_id uuid PRIMARY KEY REFERENCES count_sheet_lines,count_id uuid NOT NULL UNIQUE REFERENCES stock_counts);
+CREATE INDEX count_sheets_branch_date ON count_sheets(branch_id,created_at DESC,id);
+DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['count_sheets','count_sheet_lines','count_sheet_submissions'] LOOP EXECUTE format('CREATE TRIGGER immutable_history BEFORE UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION deny_history_change()',t); END LOOP; END $$;

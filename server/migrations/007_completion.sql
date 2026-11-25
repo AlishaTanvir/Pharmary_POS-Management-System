@@ -1,0 +1,24 @@
+ALTER TABLE branches ADD COLUMN discount_limit_bps integer NOT NULL DEFAULT 10000 CHECK(discount_limit_bps BETWEEN 0 AND 10000);
+ALTER TABLE branches ADD COLUMN cashier_discount_limit_bps integer NOT NULL DEFAULT 0 CHECK(cashier_discount_limit_bps BETWEEN 0 AND 10000);
+ALTER TABLE branches ADD COLUMN require_prescription_ref boolean NOT NULL DEFAULT false;
+ALTER TABLE sales ADD COLUMN prescription_ref text NOT NULL DEFAULT '';
+ALTER TABLE sales ADD COLUMN due_date date;
+ALTER TABLE purchases ADD COLUMN due_date date;
+ALTER TABLE customers ADD COLUMN payment_terms_days integer NOT NULL DEFAULT 0 CHECK(payment_terms_days BETWEEN 0 AND 365);
+ALTER TABLE suppliers ADD COLUMN payment_terms_days integer NOT NULL DEFAULT 0 CHECK(payment_terms_days BETWEEN 0 AND 365);
+CREATE TABLE checkout_approvals(id uuid PRIMARY KEY,branch_id uuid NOT NULL REFERENCES branches,cashier_id uuid NOT NULL REFERENCES users,approved_by uuid NOT NULL REFERENCES users,intent_hash text NOT NULL,pricing_hash text NOT NULL,scopes jsonb NOT NULL,reason text NOT NULL,expires_at timestamptz NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE approval_consumptions(approval_id uuid PRIMARY KEY REFERENCES checkout_approvals,sale_id uuid NOT NULL UNIQUE REFERENCES sales,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE supplier_returns(id uuid PRIMARY KEY,branch_id uuid NOT NULL REFERENCES branches,purchase_id uuid NOT NULL REFERENCES purchases,supplier_id uuid NOT NULL REFERENCES suppliers,idempotency_key uuid NOT NULL,request_hash text NOT NULL,credit_ref text NOT NULL,amount_paisa bigint NOT NULL CHECK(amount_paisa>=0),reason text NOT NULL,actor_id uuid NOT NULL REFERENCES users,created_at timestamptz NOT NULL DEFAULT now(),UNIQUE(branch_id,idempotency_key),UNIQUE(branch_id,supplier_id,credit_ref));
+CREATE TABLE supplier_return_lines(id uuid PRIMARY KEY,return_id uuid NOT NULL REFERENCES supplier_returns,batch_id uuid NOT NULL REFERENCES batches,quantity_base integer NOT NULL CHECK(quantity_base>0),unit_cost_paisa bigint NOT NULL CHECK(unit_cost_paisa>=0));
+ALTER TABLE movements DROP CONSTRAINT movements_type_check;
+ALTER TABLE movements ADD CONSTRAINT movements_type_check CHECK(type IN ('RECEIPT','SALE','RETURN_QUARANTINE','COUNT_ADJUSTMENT','WRITE_OFF','TRANSFER_OUT','TRANSFER_IN','SUPPLIER_RETURN'));
+CREATE INDEX supplier_returns_invoice ON supplier_returns(branch_id,purchase_id);
+CREATE TABLE expense_attachments(id uuid PRIMARY KEY,expense_id uuid NOT NULL UNIQUE REFERENCES expenses,branch_id uuid NOT NULL REFERENCES branches,filename text NOT NULL,mime text NOT NULL CHECK(mime IN ('application/pdf','image/png','image/jpeg')),content bytea NOT NULL CHECK(octet_length(content)<=1048576),sha256 text NOT NULL,actor_id uuid NOT NULL REFERENCES users,created_at timestamptz NOT NULL DEFAULT now());
+DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['checkout_approvals','approval_consumptions','supplier_returns','supplier_return_lines','expense_attachments'] LOOP EXECUTE format('CREATE TRIGGER immutable_history BEFORE UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION deny_history_change()',t); END LOOP; END $$;
+
+CREATE INDEX IF NOT EXISTS sale_lines_invoice ON sale_lines(sale_id);
+CREATE INDEX IF NOT EXISTS allocations_line ON allocations(line_id);
+CREATE INDEX IF NOT EXISTS movements_batch_time ON movements(batch_id,created_at);
+CREATE INDEX IF NOT EXISTS sales_branch_time ON sales(branch_id,created_at DESC,id);
+CREATE INDEX IF NOT EXISTS returns_invoice ON returns(sale_id);
+CREATE INDEX IF NOT EXISTS audit_branch_time ON audit_events(branch_id,created_at DESC,id);

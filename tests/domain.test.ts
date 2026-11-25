@@ -1,0 +1,9 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {allocate,allowed,multiply,roundedRatio,tender,totals} from '../server/domain';
+test('AT-02: two strips of ten are twenty base units',()=>assert.equal(multiply(2,10),20));
+test('AT-03: FEFO crosses batches and records exact quantities',()=>{const result=allocate([{id:'b',quantity:20,expiry:'2028-02-01',status:'AVAILABLE',cost_paisa:100},{id:'a',quantity:5,expiry:'2028-01-01',status:'AVAILABLE',cost_paisa:90}],12,'2027-01-01');assert.deepEqual(result.map(x=>[x.id,x.quantity_base]),[['a',5],['b',7]])});
+test('AT-04: blocked and expired batches never allocate',()=>{for(const status of ['QUARANTINED','RECALLED','EXPIRED','DAMAGED','RETURNED','DISPOSED'])assert.throws(()=>allocate([{id:'x',quantity:100,expiry:'2028-01-01',status,cost_paisa:10}],1,'2027-01-01'));assert.throws(()=>allocate([{id:'x',quantity:100,expiry:'2026-01-01',status:'AVAILABLE',cost_paisa:10}],1,'2027-01-01'))});
+test('explicit half-up tax rounding and discount bounds',()=>{assert.equal(roundedRatio(101,5000,10000),51);assert.deepEqual(totals(10000,500,1800),{subtotal_paisa:10000,discount_paisa:500,tax_paisa:1710,total_paisa:11210});assert.throws(()=>totals(1,2,0))});
+test('split tender change is limited to cash',()=>{assert.equal(tender(10000,[{method:'CARD',amount_paisa:8000},{method:'CASH',amount_paisa:3000}]),1000);assert.throws(()=>tender(10000,[{method:'CARD',amount_paisa:11000}]));assert.throws(()=>tender(10000,[{method:'CASH',amount_paisa:9000}]))});
+test('cashier permissions deny catalog changes, discounts and reports',()=>{assert.equal(allowed('CASHIER','sales:write'),true);for(const p of ['catalog:write','discount','reports','restricted','*'])assert.equal(allowed('CASHIER',p),false);assert.equal(allowed('UNKNOWN','sales:write'),false)});

@@ -1,0 +1,64 @@
+# Phase 24 - Currency decisions and scalable workflow selection
+
+Authorized as the next sequential phase after Phase 23. Date: 24 November 2026. Current status: software complete within accepted scope, including selectors, PKR-only currency, mandatory automatic FEFO, fractional costing and per-line tax. The user subsequently authorized initiating Phase 25 on 25 November 2026; those choices were resolved in the later follow-ups below.
+
+## Implemented scope
+
+Direct receipt entry now has a searchable, paginated medicine browser, using the existing branch-scoped active catalog endpoint (100 per page). Choosing a search result replaces an untouched default receipt line, or adds a receipt line when existing quantity/unit/cost/batch/expiry data has been entered and caches its unit details so changing pages does not discard the selected product or purchase-unit conversion. The existing receipt form and server-side validation remain authoritative.
+
+Offline preparation now browses every catalog page and searches by name, generic, SKU or barcode. Restricted medicines and medicines without available stock remain excluded from allocation. Quantities are keyed by medicine ID and survive search/page changes, with an explicit selected count. Preparing a new session clears old draft selections. Reservation, eligibility, available quantity and authorization checks remain enforced by the existing server preparation transaction. This expands online preparation only; an offline session still contains its explicitly reserved snapshot.
+
+Customer account selection now searches name/phone and pages through 500 results at a time, with stable name/ID ordering. The existing options endpoint still returns an array; blank parameters preserve its first-page behavior. The selected customer remains represented after changing search/page. Customer ledger review has matching search/pagination and preserves the selected account. The options endpoint retains active-only filtering and existing role restrictions; ledger review retains its existing permission. Every lookup stays branch scoped and query parameters are validated and parameterized.
+
+Search results are asynchronously guarded in the reusable medicine browser and checkout customer picker. Failures are visible, rather than silently presenting an empty customer picker. Buttons inside receipt/offline forms use type=button and do not submit a financial transaction. Search and pagination never post a receipt, reserve stock, or settle an account.
+
+## Accepted decisions
+
+Currency decision resolved on 25 November 2026: the user explicitly chose "yes keep the currency pkr" after the offered PKR-only/deferred currency-switching and FX option. PKR is the accepted operating currency for this deployment and current release scope. Configurable base-currency switching and multi-currency/exchange-rate functionality are explicitly deferred under this decision. Original FR-007 remains traceable as a configurable-currency requirement deferred by the user, rather than implemented FX.
+
+All existing amounts retain their PKR/paisa meaning (100 paisa per PKR); no migration, relabeling or conversion of invoices, balances, costs or historical reports occurs. Profile metadata now explicitly identifies PKR_ONLY, with switching/FX unsupported, and Administration displays PKR (fixed). Profile updates and new-branch configuration accept omitted currency for existing clients, or explicit PKR; an unsupported currency is rejected instead of silently accepted as a configuration change. No per-branch currency switch is introduced.
+
+Automatic FEFO decision resolved on 25 November 2026: the user explicitly chose "yes use automatic FEFO" after the option to retain mandatory automatic FEFO and defer manual overrides. Online checkout and the prepared offline counter continue to select eligible stock by earliest expiry, with the existing deterministic tie-break. Unavailable/quarantined/recalled/damaged/disposed/returned and expired stock remain excluded. There is no manual checkout batch override, including for supervisors; the existing restricted-item/discount approval workflow does not override stock eligibility or FEFO. This is acceptance of the existing allocator, with no reallocation of posted history or new financial transaction. Offline selection uses its prepared snapshot/reserved pool and local balances; synchronization rechecks central eligibility and retains blocked-stock conflicts for review. It does not acquire real-time recall awareness while disconnected. Receiving, returns, recalls, counts and transfers retain their explicit batch references; this decision concerns checkout allocation.
+
+The user subsequently requested fractional costs and per-line tax support. Migration 022 and version 0.26.0-dev.2 implement that scope; see the follow-up below.
+
+## Verification
+
+Production build and access-inventory checks passed on the implementation. A dedicated isolated browser fixture contains 105 additional medicines and 505 customer accounts; its acceptance journey checks page-two selection, selected medicine/unit retention, selected customer retention and offline quantities across page/search changes. The first dedicated large-selector browser journey passed after correcting a fixture SKU reference. All 57 backend tests passed. The final production build passed after the receipt placeholder and readable selector layout refinements. The broad 34-journey run passed 33 journeys in 5.4 minutes and exposed one existing bank-test timing race: it read the statement selection before its asynchronous list refresh. The assertion now waits for a nonempty selection. A fresh isolated focused run then passed both that complete bank journey (18.2 seconds) and the final expanded selector journey (7.6 seconds), 2/2 passed. Thus all 34 journeys have passing coverage across the broad run and focused rerun; this is not a claim of a clean single-run 34/34 result. The final selector journey also checks customer ledger search and selected-account retention. No financial implementation changes were needed for the bank test.
+
+Final production build: 55 modules, assets index-CG83nEVu.js and index-Be-iiGGt.css. API inventory remains 160 declared routes, 147 session routes, 86 CSRF checks and 545 denied-role checks. No new API route or permission was introduced. Final screenshot evidence: test-results/phase-24-receipt-selection.png and test-results/phase-24-customer-narrow.png. The final focused helper status is passed in .local/phase24-acceptance-run.json; the preceding broad-run metadata is retained separately in .local/phase24-full-suite-run.json.
+
+No production deployment, hardware acceptance or live regulator connector is included. Prior hardware/off-device recovery deferrals remain pending. Phase 25 and Phase 26 remain separate work packages.
+
+Isolated acceptance command: `node --import tsx .local/phase24-clean-acceptance.ts`. The helper creates a fresh, independently named retained database and local counter store, adds the large catalog/customer fixture, starts the API, runs Playwright and stops the owned API. It reads existing private environment credentials without printing them. It never targets the retained application database for financial postings. Metadata: `.local/phase24-acceptance-run.json`.
+
+## PKR decision follow-up verification
+
+The production build and focused currency-policy test passed. A fresh isolated browser/API run passed 2/2 journeys: the new PKR policy test and the existing field-handoff test. It verified unsupported currency rejection without profile/branch changes, legacy profile updates that omit currency, the PKR (fixed) display and the narrowed Phase 24 handoff gate. No database migration or retained financial-data change was required. Evidence is retained in .local/pkr-policy-evidence.json; screenshots are transient Playwright output. At that checkpoint, automatic FEFO was also accepted and purchase-costing remained unresolved. The later costing implementation below closes that item.
+
+## Automatic FEFO decision verification
+
+The existing online/offline allocator and its database-locking paths were reviewed. Build and 10 targeted domain/real-PostgreSQL/offline tests passed, including FEFO across batches, blocked/expired exclusions, concurrency, rollback and durable offline retry. A fresh isolated browser run passed 3/3 checkout/catalog/field-handoff journeys (16.9 seconds). No allocation algorithm, retained historical sale, batch balance or reservation was changed. Focused acceptance metadata is retained in .local/automatic-fefo-evidence.json. At that checkpoint the Phase 26 gate named only the purchase-costing decision; the later costing implementation removes it.
+
+
+## Fractional costs and per-line tax - 25 November 2026
+
+The user requested implementation rather than deferral. Both direct and order receipts now accept four-decimal selected-pack PKR costs, with exact original inventory-value/base-quantity ratios and residual lot book values. Per-line entry supports line discounts followed by proportional invoice discount, explicit capitalized/recoverable/exempt treatment, and tax amount or percentage after discounts. Header/line components, supplier credit and GL guards reconcile exact integer-paisa totals. See [Purchase costing](PURCHASE-COSTING.md) for the full policy and API contract.
+
+Sales and offline synchronization allocate exact unreserved/reserved value, including zero-paisa portions and final remainders. Customer returns retain original sale costs; supplier credits remove current free book value and cumulatively reverse original-line recoverable tax. Transfers preserve dispatched value; counts/writeoffs value adjustments consistently. Stock/profit reports, journals and restore checks use exact movement/allocation values. Cost metadata stays hidden from cashiers. Historical records are not revalued; nullable legacy fields keep recorded integer-cost behavior.
+
+The Phase 24 handoff gate is removed. PKR currency switching/FX and manual checkout batch overrides remain explicitly deferred by the user. Phase 25 deployment qualification and Phase 26 physical/operator acceptance are still open; production_approved remains false. Final verification is recorded below.
+
+
+### Final software verification
+
+Version 0.26.0-dev.2 passed the production build (58 modules) and all 66 backend tests in one clean run (200.5 seconds). The access matrix verified 150 session routes, 88 CSRF boundaries and 566 denied-role cases. All 38 Chromium journeys then passed in one clean isolated run (6.1 minutes), including the new direct/order fractional and mixed-tax journey, mixed supplier-credit preview, unchanged invoice-level purchasing, online checkout, offline PostgreSQL outage/replay, historical reports, financial posting and populated encrypted backup/restore. The new invoice screenshot was visually reviewed. No Firefox rerun or physical device acceptance is claimed for this follow-up.
+
+Focused tests also exercised arbitrary residual partitions, zero-cost unit allocations, exact offline reserved cost, customer/supplier credits, transfer/count/writeoff valuation, GL balance and detection of a deliberately inconsistent lot value (rolled back). Legacy migration fixtures were updated to create historical journals using their historical schema and compare original fields independently of newly added null columns; historical values were not changed to make tests pass.
+
+Evidence: `.local/fractional-cost-backend-evidence.json`, `.local/fractional-cost-acceptance-evidence.json`; screenshot `test-results/phase24-fractional-invoice.png` is transient test output. The full browser runner retained its independent database/store and stopped its owned API and PostgreSQL. Earlier failed iterations exposed a stale generated inventory and historical test-fixture/locator setup issues; the final complete runs above passed after correction.
+
+
+### Retained local database upgrade
+
+An encrypted pre-upgrade backup of the retained development database was created and successfully restored into a separate database with zero stock, invoice, journal, transfer, opening, bank and classification mismatches. Migration 022 was then applied. Before/after row counts and original-field checksums across 20 financial/inventory tables matched, excluding only the additive new fields. The post-upgrade modern inventory-value check returned zero mismatches. No financial test transaction was posted to this database. Evidence and the private backup reference are retained in `.local/fractional-cost-upgrade-evidence.json`; the encrypted backup and verification database are retained. Owned local PostgreSQL was stopped afterward. The first Windows startup helper waited on inherited process handles; it was stopped before backup/migration, corrected, and the complete upgrade then passed.

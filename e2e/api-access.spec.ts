@@ -1,0 +1,15 @@
+import {test,expect} from '@playwright/test';
+import {readFile} from 'node:fs/promises';
+test('Phase 19 organization administrator reviews/exports API access while cashier and unauthenticated requests are denied',async({page,browser})=>{
+ const version=JSON.parse(await readFile('package.json','utf8')).version;
+ await page.goto('/');await page.getByLabel('Username',{exact:true}).fill('owner');await page.getByLabel('Password',{exact:true}).fill(process.env.ADMIN_PASSWORD!);await page.getByRole('button',{name:/Sign in/}).click();await expect(page.getByRole('heading',{name:'Your pharmacy at a glance'})).toBeVisible();
+ await page.getByRole('link',{name:'Administration',exact:true}).click();const review=page.locator('.security-review');await review.getByText('API access review',{exact:true}).click();await expect(review).toContainText('Version '+version);
+ await review.getByLabel('Find endpoint',{exact:true}).fill('/api/online-drafts');await expect(review).toContainText('4 matching endpoints');await expect(review.getByRole('row')).toHaveCount(5);
+ await review.getByLabel('Access boundary',{exact:true}).selectOption('PUBLIC');await expect(review).toContainText('0 matching endpoints');await review.getByLabel('Find endpoint',{exact:true}).fill('');await expect(review).toContainText('2 matching endpoints');await expect(review).toContainText('/api/auth/login');
+ const pending=page.waitForEvent('download');await review.getByRole('button',{name:'Export access review',exact:true}).click();const download=await pending;expect(download.suggestedFilename()).toBe('api-access-inventory.json');const report=JSON.parse(await readFile((await download.path())!,'utf8'));expect(report.inventory.app_version).toBe(version);expect(report.inventory.routes.length).toBeGreaterThan(100);expect(report.inventory.route_source_sha256).toMatch(/^[a-f0-9]{64}$/);expect(report.inventory.routes.filter((route:any)=>route.path==='/api/reports/daily'&&route.method==='GET')).toHaveLength(1);
+ expect((await page.request.post('/api/security/api-access/export',{data:{}})).status()).toBe(403);expect((await page.request.post('/_control/stop',{data:{}})).status()).toBe(403);
+ const isolated=await browser.newContext();try{
+  expect((await isolated.request.get('/api/security/api-access')).status()).toBe(401);expect((await isolated.request.post('/api/auth/login',{data:{username:'cashier',password:process.env.CASHIER_PASSWORD}})).ok()).toBeTruthy();const session=await isolated.request.get('/api/auth/me').then(r=>r.json());expect((await isolated.request.get('/api/security/api-access')).status()).toBe(403);expect((await isolated.request.post('/api/security/api-access/export',{headers:{'X-CSRF-Token':session.csrf},data:{}})).status()).toBe(403);
+  const cashier=await isolated.newPage();await cashier.goto('/#settings');await expect(cashier.getByRole('heading',{name:'Administration',exact:true})).toBeVisible();await expect(cashier.locator('.security-review')).toHaveCount(0);
+ }finally{await isolated.close()}
+});
